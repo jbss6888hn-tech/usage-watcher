@@ -1,0 +1,16 @@
+{
+  "name": "usage-watcher",
+  "version": "0.1.0",
+  "description": "Local-only Codex + Claude Code usage monitor → syncs to a private GitHub Gist for cross-device viewing (Mac/Win/iPhone widget)",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "once": "node src/index.js --once",
+    "snapshot": "node src/index.js --once --no-push"
+  },
+  "dependencies": {}
+}
