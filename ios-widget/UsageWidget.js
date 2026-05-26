@@ -156,6 +156,7 @@ function colorForPercent(p) {
 
 function drawRing(percent, sizePx, label, opts) {
   const estimated = opts && opts.estimated;
+  const stale = opts && opts.stale;
   const ctx = new DrawContext();
   ctx.size = new Size(sizePx, sizePx);
   ctx.opaque = false;
@@ -174,11 +175,12 @@ function drawRing(percent, sizePx, label, opts) {
   ctx.addPath(bgPath);
   ctx.strokePath();
 
-  // Foreground arc — approximate by drawing many small line segments
+  // Foreground arc — approximate by drawing many small line segments.
+  // When stale, render a thin grey arc instead of a coloured one.
   const pct = Math.max(0, Math.min(100, percent || 0));
   const startAngle = -Math.PI / 2;
   const endAngle = startAngle + (pct / 100) * Math.PI * 2;
-  const fgColor = colorForPercent(pct);
+  const fgColor = stale ? new Color("#888888", 0.6) : colorForPercent(pct);
 
   const arcPath = new Path();
   const steps = 64;
@@ -195,8 +197,8 @@ function drawRing(percent, sizePx, label, opts) {
   ctx.addPath(arcPath);
   ctx.strokePath();
 
-  // Center text: percentage (prefix ~ for estimated values)
-  const pctText = percent === null || percent === undefined
+  // Center text: percentage (prefix ~ for estimated; show "—" when stale or null)
+  const pctText = (percent === null || percent === undefined || stale)
     ? "—"
     : (estimated ? "~" : "") + Math.round(percent) + "%";
   const fontSize = sizePx * 0.22;
@@ -257,11 +259,13 @@ function buildSmall(data) {
   const ringSize = 58;
   const primary = data.codex?.primary?.used_percent ?? null;
   const secondary = data.codex?.secondary?.used_percent ?? null;
+  const primaryStale = !!data.codex?.primary?.stale;
+  const secondaryStale = !!data.codex?.secondary?.stale;
 
-  const left = ringRow.addImage(drawRing(primary, ringSize * 2, "5h"));
+  const left = ringRow.addImage(drawRing(primary, ringSize * 2, "5h", { stale: primaryStale }));
   left.imageSize = new Size(ringSize, ringSize);
   ringRow.addSpacer(8);
-  const right = ringRow.addImage(drawRing(secondary, ringSize * 2, "wk"));
+  const right = ringRow.addImage(drawRing(secondary, ringSize * 2, "wk", { stale: secondaryStale }));
   right.imageSize = new Size(ringSize, ringSize);
 
   w.addSpacer(3);
@@ -330,13 +334,15 @@ function buildMedium(data) {
   const ringSize = 56;
   const codexP = data.codex?.primary?.used_percent ?? null;
   const codexS = data.codex?.secondary?.used_percent ?? null;
+  const codexPStale = !!data.codex?.primary?.stale;
+  const codexSStale = !!data.codex?.secondary?.stale;
   const claudeP = data.claude?.primary?.used_percent ?? null;
   const claudeS = data.claude?.secondary?.used_percent ?? null;
 
-  const r1 = mainRow.addImage(drawRing(codexP, ringSize * 2, "5h"));
+  const r1 = mainRow.addImage(drawRing(codexP, ringSize * 2, "5h", { stale: codexPStale }));
   r1.imageSize = new Size(ringSize, ringSize);
   mainRow.addSpacer(4);
-  const r2 = mainRow.addImage(drawRing(codexS, ringSize * 2, "wk"));
+  const r2 = mainRow.addImage(drawRing(codexS, ringSize * 2, "wk", { stale: codexSStale }));
   r2.imageSize = new Size(ringSize, ringSize);
 
   // visual divider
@@ -354,14 +360,17 @@ function buildMedium(data) {
 
   w.addSpacer();
 
-  // ── Footer: today's Claude cost + countdowns + updated ──
+  // ── Footer: msgs counts + cost + updated ──
   const today = data.claude?.today || {};
   const cost = (today.cost_usd || 0).toFixed(2);
-  const msgs5h = data.claude?.messages_last_5h ?? 0;
+  const cm5h = data.claude?.primary?.messages ?? 0;
+  const cm7d = data.claude?.secondary?.messages ?? 0;
+  const climit5h = data.claude?.primary?.limit ?? "?";
+  const climit7d = data.claude?.secondary?.limit ?? "?";
 
   const footRow = w.addStack();
   footRow.layoutHorizontally();
-  const ft = footRow.addText(`$${cost} today · ${msgs5h} msgs`);
+  const ft = footRow.addText(`Claude ${cm5h}/${climit5h} · ${cm7d}/${climit7d} · $${cost}`);
   ft.font = Font.systemFont(9);
   ft.textColor = new Color("#888");
   footRow.addSpacer();
@@ -369,13 +378,20 @@ function buildMedium(data) {
   upd.font = Font.systemFont(9);
   upd.textColor = new Color("#888");
 
+  // Codex source note — make it obvious when stale
   const footRow2 = w.addStack();
   footRow2.layoutHorizontally();
-  const cdx5h = countdown(data.codex?.primary?.resets_at);
-  const cdxWk = countdown(data.codex?.secondary?.resets_at);
-  const f2 = footRow2.addText(`Codex 5h ${cdx5h} · wk ${cdxWk}`);
+  let codexNote;
+  if (codexPStale && codexSStale) {
+    codexNote = "Codex CLI sample " + ago(data.codex?.last_sample_at) + " (desktop app not tracked)";
+  } else if (codexPStale) {
+    codexNote = "Codex 5h cycled · wk " + countdown(data.codex?.secondary?.resets_at);
+  } else {
+    codexNote = `Codex 5h ${countdown(data.codex?.primary?.resets_at)} · wk ${countdown(data.codex?.secondary?.resets_at)}`;
+  }
+  const f2 = footRow2.addText(codexNote);
   f2.font = Font.systemFont(9);
-  f2.textColor = new Color("#888");
+  f2.textColor = codexPStale ? new Color("#c0392b", 0.9) : new Color("#888");
 
   return w;
 }

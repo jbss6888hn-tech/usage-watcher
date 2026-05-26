@@ -34,6 +34,8 @@ CODEX_PRIMARY=$(jq -r '.codex.primary.used_percent // empty' "$SNAP" 2>/dev/null
 CODEX_SECONDARY=$(jq -r '.codex.secondary.used_percent // empty' "$SNAP" 2>/dev/null)
 CODEX_RESETS_AT=$(jq -r '.codex.primary.resets_at // empty' "$SNAP" 2>/dev/null)
 CODEX_WK_RESETS=$(jq -r '.codex.secondary.resets_at // empty' "$SNAP" 2>/dev/null)
+CODEX_PRIMARY_STALE=$(jq -r '.codex.primary.stale // false' "$SNAP" 2>/dev/null)
+CODEX_SECONDARY_STALE=$(jq -r '.codex.secondary.stale // false' "$SNAP" 2>/dev/null)
 CODEX_PLAN=$(jq -r '.codex.plan_type // "?"' "$SNAP" 2>/dev/null)
 CODEX_SAMPLE=$(jq -r '.codex.last_sample_at // "-"' "$SNAP" 2>/dev/null)
 
@@ -124,12 +126,12 @@ fi
 STALE_FLAG=""
 if [ "$DAEMON_AGE_SEC" -gt 300 ]; then STALE_FLAG="⚠ "; fi
 
-# If the 5h window has already cycled past resets_at, the used_percent we read
-# is stale (the window has reset since the sample was taken). Same for weekly.
+# Use the stale flag computed by snapshot.js (covers both "window cycled past
+# resets_at" and "sample older than the window itself").
 PRIMARY_STALE=0
 SECONDARY_STALE=0
-is_past "$CODEX_RESETS_AT" && PRIMARY_STALE=1
-is_past "$CODEX_WK_RESETS" && SECONDARY_STALE=1
+[ "$CODEX_PRIMARY_STALE" = "true" ] && PRIMARY_STALE=1
+[ "$CODEX_SECONDARY_STALE" = "true" ] && SECONDARY_STALE=1
 
 # === Menu bar title (one short line) ===
 # Format: [codex-icon] codex5h | codexWk · [claude-icon] ~claude5h | ~claudeWk
@@ -147,19 +149,25 @@ echo "${STALE_FLAG}◐${PRIMARY_TXT}│${SECONDARY_TXT}  ✦${CLAUDE_P_TXT}│${
 # === Dropdown ===
 echo "---"
 echo "Codex ${CODEX_PLAN}"
-if [ "$PRIMARY_STALE" = "1" ]; then
-  echo "5h window: $(fmt_pct "$CODEX_PRIMARY")* | font='Menlo' color=#888"
-  echo "  * sample is from $(fmt_ago "$CODEX_SAMPLE") — window has cycled | font='Menlo' color=#888"
+if [ "$PRIMARY_STALE" = "1" ] && [ "$SECONDARY_STALE" = "1" ]; then
+  echo "⚠ data is $(fmt_ago "$CODEX_SAMPLE") — desktop Codex.app | font='Menlo' color=#c0392b"
+  echo "  not tracked (only Codex CLI / VS Code) | font='Menlo' color=#888"
+  echo "  open Codex CLI / VS Code to refresh | font='Menlo' color=#888"
 else
-  echo "5h window: ${PRIMARY_TXT} used | font='Menlo'"
-  echo "  resets in $(fmt_countdown "$CODEX_RESETS_AT") | font='Menlo' color=#888"
-fi
-if [ "$SECONDARY_STALE" = "1" ]; then
-  echo "Weekly: $(fmt_pct "$CODEX_SECONDARY")* | font='Menlo' color=#888"
-  echo "  * window has cycled since last sample | font='Menlo' color=#888"
-else
-  echo "Weekly: ${SECONDARY_TXT} used | font='Menlo'"
-  echo "  resets in $(fmt_countdown "$CODEX_WK_RESETS") | font='Menlo' color=#888"
+  if [ "$PRIMARY_STALE" = "1" ]; then
+    echo "5h window: $(fmt_pct "$CODEX_PRIMARY")* (stale) | font='Menlo' color=#888"
+    echo "  * sample $(fmt_ago "$CODEX_SAMPLE") — window cycled | font='Menlo' color=#888"
+  else
+    echo "5h window: ${PRIMARY_TXT} used | font='Menlo'"
+    echo "  resets in $(fmt_countdown "$CODEX_RESETS_AT") | font='Menlo' color=#888"
+  fi
+  if [ "$SECONDARY_STALE" = "1" ]; then
+    echo "Weekly: $(fmt_pct "$CODEX_SECONDARY")* (stale) | font='Menlo' color=#888"
+    echo "  * sample $(fmt_ago "$CODEX_SAMPLE") — desktop usage not seen | font='Menlo' color=#888"
+  else
+    echo "Weekly: ${SECONDARY_TXT} used | font='Menlo'"
+    echo "  resets in $(fmt_countdown "$CODEX_WK_RESETS") | font='Menlo' color=#888"
+  fi
 fi
 echo "  last sample $(fmt_ago "$CODEX_SAMPLE") | font='Menlo' color=#888"
 
