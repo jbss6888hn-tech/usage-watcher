@@ -55,7 +55,7 @@ fmt_countdown() {
   [ -z "$target" ] || [ "$target" = "null" ] && { echo "—"; return; }
   local now=$(date +%s)
   local diff=$(( target - now ))
-  if [ "$diff" -le 0 ]; then echo "reset"; return; fi
+  if [ "$diff" -le 0 ]; then echo "window cycled"; return; fi
   if [ "$diff" -ge 86400 ]; then
     printf "%dd %dh" $(( diff / 86400 )) $(( (diff % 86400) / 3600 ))
   elif [ "$diff" -ge 3600 ]; then
@@ -65,12 +65,28 @@ fmt_countdown() {
   fi
 }
 
+# Returns 1 if the given unix-second target is already in the past.
+is_past() {
+  local target="$1"
+  [ -z "$target" ] || [ "$target" = "null" ] && return 0
+  local now=$(date +%s)
+  [ "$target" -le "$now" ]
+}
+
+iso_to_epoch() {
+  # Parse an ISO-8601 UTC timestamp (e.g. 2026-05-26T15:07:25.784Z) → unix seconds.
+  # Strips optional trailing Z and fractional seconds, then parses as UTC.
+  local ts="${1%Z}"; ts="${ts%.*}"
+  TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$ts" "+%s" 2>/dev/null
+}
+
 fmt_ago() {
   # arg = ISO timestamp; output "Xm ago" / "Xh ago" / "Xd ago"
   local ts="$1"
   [ -z "$ts" ] || [ "$ts" = "-" ] || [ "$ts" = "null" ] && { echo "—"; return; }
   local then now diff
-  then=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${ts%.*}" "+%s" 2>/dev/null) || { echo "—"; return; }
+  then=$(iso_to_epoch "$ts") || { echo "—"; return; }
+  [ -z "$then" ] && { echo "—"; return; }
   now=$(date +%s)
   diff=$(( now - then ))
   if [ "$diff" -lt 60 ]; then echo "just now"
@@ -93,25 +109,45 @@ fmt_tokens() {
 # Determine if data is stale (Codex sample > 24h or daemon generated_at > 5min)
 DAEMON_AGE_SEC=0
 if [ "$GENERATED_AT" != "-" ] && [ "$GENERATED_AT" != "null" ]; then
-  GEN_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${GENERATED_AT%.*}" "+%s" 2>/dev/null || echo 0)
+  GEN_EPOCH=$(iso_to_epoch "$GENERATED_AT")
+  [ -z "$GEN_EPOCH" ] && GEN_EPOCH=0
   NOW=$(date +%s)
   DAEMON_AGE_SEC=$(( NOW - GEN_EPOCH ))
 fi
 STALE_FLAG=""
 if [ "$DAEMON_AGE_SEC" -gt 300 ]; then STALE_FLAG="⚠ "; fi
 
+# If the 5h window has already cycled past resets_at, the used_percent we read
+# is stale (the window has reset since the sample was taken). Same for weekly.
+PRIMARY_STALE=0
+SECONDARY_STALE=0
+is_past "$CODEX_RESETS_AT" && PRIMARY_STALE=1
+is_past "$CODEX_WK_RESETS" && SECONDARY_STALE=1
+
 # === Menu bar title (one short line) ===
 PRIMARY_TXT=$(fmt_pct "$CODEX_PRIMARY")
 SECONDARY_TXT=$(fmt_pct "$CODEX_SECONDARY")
+[ "$PRIMARY_STALE" = "1" ] && PRIMARY_TXT="—"
+[ "$SECONDARY_STALE" = "1" ] && SECONDARY_TXT="—"
 echo "${STALE_FLAG}◐ ${PRIMARY_TXT} │ ${SECONDARY_TXT}"
 
 # === Dropdown ===
 echo "---"
 echo "Codex ${CODEX_PLAN}"
-echo "5h window: ${PRIMARY_TXT} used | font='Menlo'"
-echo "  resets in $(fmt_countdown "$CODEX_RESETS_AT") | font='Menlo' color=#888"
-echo "Weekly: ${SECONDARY_TXT} used | font='Menlo'"
-echo "  resets in $(fmt_countdown "$CODEX_WK_RESETS") | font='Menlo' color=#888"
+if [ "$PRIMARY_STALE" = "1" ]; then
+  echo "5h window: $(fmt_pct "$CODEX_PRIMARY")* | font='Menlo' color=#888"
+  echo "  * sample is from $(fmt_ago "$CODEX_SAMPLE") — window has cycled | font='Menlo' color=#888"
+else
+  echo "5h window: ${PRIMARY_TXT} used | font='Menlo'"
+  echo "  resets in $(fmt_countdown "$CODEX_RESETS_AT") | font='Menlo' color=#888"
+fi
+if [ "$SECONDARY_STALE" = "1" ]; then
+  echo "Weekly: $(fmt_pct "$CODEX_SECONDARY")* | font='Menlo' color=#888"
+  echo "  * window has cycled since last sample | font='Menlo' color=#888"
+else
+  echo "Weekly: ${SECONDARY_TXT} used | font='Menlo'"
+  echo "  resets in $(fmt_countdown "$CODEX_WK_RESETS") | font='Menlo' color=#888"
+fi
 echo "  last sample $(fmt_ago "$CODEX_SAMPLE") | font='Menlo' color=#888"
 
 echo "---"
