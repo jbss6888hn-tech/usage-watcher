@@ -75,10 +75,15 @@ export async function parseClaudeUsage() {
   const byModel = new Map(); // modelId -> bucket
   const seenIds = new Set();
   let last5hCount = 0;
+  let last7dCount = 0;
+  let tokens5h = 0;
+  let tokens7d = 0;
+  let earliestTs5h = null; // first message inside the rolling 5h window
   let latestTs = null;
 
   const todayStart = startOfTodayLocal();
   const fiveHoursAgo = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   for (const file of files) {
     let text;
@@ -110,7 +115,20 @@ export async function parseClaudeUsage() {
         if (!byModel.has(model)) byModel.set(model, emptyBucket());
         addUsage(byModel.get(model), model, msg.usage);
       }
-      if (ts >= fiveHoursAgo) last5hCount += 1;
+      const inp = msg.usage.input_tokens || 0;
+      const out = msg.usage.output_tokens || 0;
+      const cw  = msg.usage.cache_creation_input_tokens || 0;
+      const cr  = msg.usage.cache_read_input_tokens || 0;
+      const totalTok = inp + out + cw + cr;
+      if (ts >= fiveHoursAgo) {
+        last5hCount += 1;
+        tokens5h += totalTok;
+        if (!earliestTs5h || ts < earliestTs5h) earliestTs5h = ts;
+      }
+      if (ts >= sevenDaysAgo) {
+        last7dCount += 1;
+        tokens7d += totalTok;
+      }
     }
   }
 
@@ -126,6 +144,10 @@ export async function parseClaudeUsage() {
     today,
     by_model: byModelObj,
     messages_last_5h: last5hCount,
+    messages_last_7d: last7dCount,
+    tokens_last_5h: tokens5h,
+    tokens_last_7d: tokens7d,
+    window_5h_start_ts: earliestTs5h,  // ISO of first msg inside the rolling 5h window
     last_sample_at: latestTs,
   };
 }

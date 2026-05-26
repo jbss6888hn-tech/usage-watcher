@@ -40,6 +40,13 @@ CODEX_SAMPLE=$(jq -r '.codex.last_sample_at // "-"' "$SNAP" 2>/dev/null)
 CLAUDE_TOKENS=$(jq -r '(.claude.today.input_tokens + .claude.today.output_tokens + .claude.today.cache_creation_input_tokens + .claude.today.cache_read_input_tokens) // 0' "$SNAP" 2>/dev/null)
 CLAUDE_COST=$(jq -r '.claude.today.cost_usd // 0' "$SNAP" 2>/dev/null)
 CLAUDE_MSGS=$(jq -r '.claude.messages_last_5h // 0' "$SNAP" 2>/dev/null)
+CLAUDE_MSGS_7D=$(jq -r '.claude.messages_last_7d // 0' "$SNAP" 2>/dev/null)
+CLAUDE_PRIMARY=$(jq -r '.claude.primary.used_percent // empty' "$SNAP" 2>/dev/null)
+CLAUDE_SECONDARY=$(jq -r '.claude.secondary.used_percent // empty' "$SNAP" 2>/dev/null)
+CLAUDE_PRIMARY_LIMIT=$(jq -r '.claude.primary.limit // empty' "$SNAP" 2>/dev/null)
+CLAUDE_SECONDARY_LIMIT=$(jq -r '.claude.secondary.limit // empty' "$SNAP" 2>/dev/null)
+CLAUDE_RESETS_AT=$(jq -r '.claude.primary.resets_at // empty' "$SNAP" 2>/dev/null)
+CLAUDE_PLAN_LABEL=$(jq -r '.claude.plan_label // "?"' "$SNAP" 2>/dev/null)
 CLAUDE_SAMPLE=$(jq -r '.claude.last_sample_at // "-"' "$SNAP" 2>/dev/null)
 
 GENERATED_AT=$(jq -r '.generated_at // "-"' "$SNAP" 2>/dev/null)
@@ -125,11 +132,17 @@ is_past "$CODEX_RESETS_AT" && PRIMARY_STALE=1
 is_past "$CODEX_WK_RESETS" && SECONDARY_STALE=1
 
 # === Menu bar title (one short line) ===
+# Format: [codex-icon] codex5h | codexWk · [claude-icon] ~claude5h | ~claudeWk
 PRIMARY_TXT=$(fmt_pct "$CODEX_PRIMARY")
 SECONDARY_TXT=$(fmt_pct "$CODEX_SECONDARY")
 [ "$PRIMARY_STALE" = "1" ] && PRIMARY_TXT="—"
 [ "$SECONDARY_STALE" = "1" ] && SECONDARY_TXT="—"
-echo "${STALE_FLAG}◐ ${PRIMARY_TXT} │ ${SECONDARY_TXT}"
+CLAUDE_P_TXT=$(fmt_pct "$CLAUDE_PRIMARY")
+CLAUDE_S_TXT=$(fmt_pct "$CLAUDE_SECONDARY")
+# Prefix ~ for Claude (estimates), only when value is numeric.
+[ "$CLAUDE_P_TXT" != "—" ] && CLAUDE_P_TXT="~${CLAUDE_P_TXT}"
+[ "$CLAUDE_S_TXT" != "—" ] && CLAUDE_S_TXT="~${CLAUDE_S_TXT}"
+echo "${STALE_FLAG}◐${PRIMARY_TXT}│${SECONDARY_TXT}  ✦${CLAUDE_P_TXT}│${CLAUDE_S_TXT}"
 
 # === Dropdown ===
 echo "---"
@@ -151,10 +164,19 @@ fi
 echo "  last sample $(fmt_ago "$CODEX_SAMPLE") | font='Menlo' color=#888"
 
 echo "---"
-echo "Claude Code"
+echo "Claude Code (${CLAUDE_PLAN_LABEL}) — limits are estimates"
+if [ -n "$CLAUDE_PRIMARY" ] && [ "$CLAUDE_PRIMARY" != "null" ]; then
+  echo "5h window: ~$(fmt_pct "$CLAUDE_PRIMARY") (~${CLAUDE_MSGS}/${CLAUDE_PRIMARY_LIMIT} msgs) | font='Menlo'"
+  if [ -n "$CLAUDE_RESETS_AT" ] && [ "$CLAUDE_RESETS_AT" != "null" ]; then
+    echo "  oldest msg ages out in $(fmt_countdown "$CLAUDE_RESETS_AT") | font='Menlo' color=#888"
+  fi
+fi
+if [ -n "$CLAUDE_SECONDARY" ] && [ "$CLAUDE_SECONDARY" != "null" ]; then
+  echo "Weekly: ~$(fmt_pct "$CLAUDE_SECONDARY") (~${CLAUDE_MSGS_7D}/${CLAUDE_SECONDARY_LIMIT} msgs) | font='Menlo'"
+  echo "  rolling 7-day window | font='Menlo' color=#888"
+fi
 echo "Today: $(fmt_tokens "$CLAUDE_TOKENS") tokens | font='Menlo'"
 echo "  est cost \$$CLAUDE_COST | font='Menlo' color=#888"
-echo "  last 5h: ${CLAUDE_MSGS} msgs | font='Menlo' color=#888"
 echo "  last sample $(fmt_ago "$CLAUDE_SAMPLE") | font='Menlo' color=#888"
 
 echo "---"

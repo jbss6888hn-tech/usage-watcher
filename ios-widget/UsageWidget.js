@@ -93,7 +93,7 @@ function pickNewer(a, b) {
 }
 
 function mergeSnapshots(gistFiles) {
-  const snaps = Object.values(gistFiles).filter((x) => x && x.schema_version === 1);
+  const snaps = Object.values(gistFiles).filter((x) => x && typeof x.schema_version === "number");
   if (snaps.length === 0) {
     return { _empty: true };
   }
@@ -120,21 +120,22 @@ function countdown(unixSec) {
   if (!unixSec) return "—";
   const now = Date.now() / 1000;
   const diff = unixSec - now;
-  if (diff <= 0) return "reset";
+  if (diff <= 0) return "cycled";
   if (diff >= 86400) return Math.floor(diff / 86400) + "d " + Math.floor((diff % 86400) / 3600) + "h";
   if (diff >= 3600)  return Math.floor(diff / 3600)  + "h " + Math.floor((diff % 3600) / 60) + "m";
   return Math.floor(diff / 60) + "m";
 }
 
+// Returns "just now" / "Xm ago" / "Xh ago" / "Xd ago" already-suffixed.
 function ago(isoTs) {
   if (!isoTs) return "—";
   const t = Date.parse(isoTs);
   if (Number.isNaN(t)) return "—";
   const diff = (Date.now() - t) / 1000;
   if (diff < 60) return "just now";
-  if (diff < 3600) return Math.floor(diff / 60) + "m";
-  if (diff < 86400) return Math.floor(diff / 3600) + "h";
-  return Math.floor(diff / 86400) + "d";
+  if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+  if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+  return Math.floor(diff / 86400) + "d ago";
 }
 
 function fmtTokens(n) {
@@ -153,7 +154,8 @@ function colorForPercent(p) {
 
 // ---------- 4. Ring drawing (Canvas) ----------
 
-function drawRing(percent, sizePx, label) {
+function drawRing(percent, sizePx, label, opts) {
+  const estimated = opts && opts.estimated;
   const ctx = new DrawContext();
   ctx.size = new Size(sizePx, sizePx);
   ctx.opaque = false;
@@ -193,8 +195,10 @@ function drawRing(percent, sizePx, label) {
   ctx.addPath(arcPath);
   ctx.strokePath();
 
-  // Center text: percentage
-  const pctText = percent === null || percent === undefined ? "—" : Math.round(percent) + "%";
+  // Center text: percentage (prefix ~ for estimated values)
+  const pctText = percent === null || percent === undefined
+    ? "—"
+    : (estimated ? "~" : "") + Math.round(percent) + "%";
   const fontSize = sizePx * 0.22;
   ctx.setFont(Font.boldSystemFont(fontSize));
   ctx.setTextColor(Color.dynamic(new Color("#222"), new Color("#f5f5f5")));
@@ -245,12 +249,12 @@ function buildSmall(data) {
 
   w.addSpacer(4);
 
-  // Two rings
+  // Codex rings
   const ringRow = w.addStack();
   ringRow.layoutHorizontally();
   ringRow.centerAlignContent();
 
-  const ringSize = 60;
+  const ringSize = 58;
   const primary = data.codex?.primary?.used_percent ?? null;
   const secondary = data.codex?.secondary?.used_percent ?? null;
 
@@ -260,17 +264,27 @@ function buildSmall(data) {
   const right = ringRow.addImage(drawRing(secondary, ringSize * 2, "wk"));
   right.imageSize = new Size(ringSize, ringSize);
 
-  w.addSpacer(4);
+  w.addSpacer(3);
 
-  // Footer: resets countdown + stale flag
+  // Claude one-line summary (Pro estimates, not enough room for full rings)
+  const claudeP = data.claude?.primary?.used_percent;
+  const claudeS = data.claude?.secondary?.used_percent;
+  const claudeLine = w.addText(
+    `Claude ~${pct(claudeP)} · ~${pct(claudeS)}`
+  );
+  claudeLine.font = Font.systemFont(9);
+  claudeLine.textColor = new Color("#888");
+
+  w.addSpacer(2);
+
+  // Footer
   const fr = w.addStack();
   fr.layoutHorizontally();
-  const resetsTxt = "resets " + countdown(data.codex?.primary?.resets_at);
-  const r = fr.addText(resetsTxt);
+  const r = fr.addText("5h " + countdown(data.codex?.primary?.resets_at));
   r.font = Font.systemFont(9);
   r.textColor = new Color("#888");
   fr.addSpacer();
-  const u = fr.addText(ago(data.generated_at) + " ago");
+  const u = fr.addText(ago(data.generated_at));
   u.font = Font.systemFont(9);
   u.textColor = new Color("#888");
 
@@ -281,68 +295,87 @@ function buildMedium(data) {
   const w = new ListWidget();
   applyBaseStyle(w);
 
+  // ── Header row ──
+  const codexPlan = (data.codex?.plan_type || "—").toUpperCase();
+  const claudePlan = (data.claude?.plan_label || "—");
   const topRow = w.addStack();
-  const t = topRow.addText("Codex · Claude Code");
+  const t = topRow.addText("Codex · Claude");
   t.font = Font.semiboldSystemFont(12);
   topRow.addSpacer();
-  const plan = topRow.addText((data.codex?.plan_type || "").toUpperCase());
-  plan.font = Font.systemFont(10);
+  const plan = topRow.addText(`${codexPlan} · ${claudePlan}`);
+  plan.font = Font.systemFont(9);
   plan.textColor = new Color("#888");
 
   w.addSpacer(6);
 
+  // ── Section headers row (over each pair of rings) ──
+  const sectionRow = w.addStack();
+  sectionRow.layoutHorizontally();
+  const codexLbl = sectionRow.addText("Codex");
+  codexLbl.font = Font.mediumSystemFont(10);
+  codexLbl.textColor = new Color("#888");
+  sectionRow.addSpacer();
+  const claudeLbl = sectionRow.addText("Claude  ~ est");
+  claudeLbl.font = Font.mediumSystemFont(10);
+  claudeLbl.textColor = new Color("#888");
+  sectionRow.addSpacer();
+
+  w.addSpacer(2);
+
+  // ── 4 rings: Codex 5h, Codex wk | Claude 5h, Claude wk ──
   const mainRow = w.addStack();
   mainRow.layoutHorizontally();
   mainRow.centerAlignContent();
 
-  // Left: two rings
-  const leftStack = mainRow.addStack();
-  leftStack.layoutHorizontally();
-  const ringSize = 64;
-  const r1 = leftStack.addImage(drawRing(data.codex?.primary?.used_percent, ringSize * 2, "5h"));
+  const ringSize = 56;
+  const codexP = data.codex?.primary?.used_percent ?? null;
+  const codexS = data.codex?.secondary?.used_percent ?? null;
+  const claudeP = data.claude?.primary?.used_percent ?? null;
+  const claudeS = data.claude?.secondary?.used_percent ?? null;
+
+  const r1 = mainRow.addImage(drawRing(codexP, ringSize * 2, "5h"));
   r1.imageSize = new Size(ringSize, ringSize);
-  leftStack.addSpacer(6);
-  const r2 = leftStack.addImage(drawRing(data.codex?.secondary?.used_percent, ringSize * 2, "wk"));
+  mainRow.addSpacer(4);
+  const r2 = mainRow.addImage(drawRing(codexS, ringSize * 2, "wk"));
   r2.imageSize = new Size(ringSize, ringSize);
 
-  mainRow.addSpacer(12);
+  // visual divider
+  mainRow.addSpacer(10);
+  const divider = mainRow.addText("│");
+  divider.font = Font.systemFont(36);
+  divider.textColor = new Color("#888", 0.35);
+  mainRow.addSpacer(10);
 
-  // Right: Claude stats
-  const rightStack = mainRow.addStack();
-  rightStack.layoutVertically();
-  const cTitle = rightStack.addText("Claude today");
-  cTitle.font = Font.semiboldSystemFont(11);
-  cTitle.textColor = new Color("#888");
-  rightStack.addSpacer(2);
-
-  const today = data.claude?.today || {};
-  const totalTok = (today.input_tokens || 0) + (today.output_tokens || 0)
-                 + (today.cache_creation_input_tokens || 0) + (today.cache_read_input_tokens || 0);
-  const tokTxt = rightStack.addText(fmtTokens(totalTok) + " tok");
-  tokTxt.font = Font.boldSystemFont(16);
-
-  const costTxt = rightStack.addText("$" + (today.cost_usd || 0).toFixed(2) + " est");
-  costTxt.font = Font.systemFont(11);
-  costTxt.textColor = new Color("#888");
-
-  rightStack.addSpacer(4);
-  const msgTxt = rightStack.addText((data.claude?.messages_last_5h ?? 0) + " msgs · 5h");
-  msgTxt.font = Font.systemFont(10);
-  msgTxt.textColor = new Color("#888");
+  const r3 = mainRow.addImage(drawRing(claudeP, ringSize * 2, "5h", { estimated: true }));
+  r3.imageSize = new Size(ringSize, ringSize);
+  mainRow.addSpacer(4);
+  const r4 = mainRow.addImage(drawRing(claudeS, ringSize * 2, "wk", { estimated: true }));
+  r4.imageSize = new Size(ringSize, ringSize);
 
   w.addSpacer();
 
-  // Footer
-  const fr = w.addStack();
-  const reset = "5h resets " + countdown(data.codex?.primary?.resets_at);
-  const wk = "wk " + countdown(data.codex?.secondary?.resets_at);
-  const ft = fr.addText(`${reset} · ${wk}`);
+  // ── Footer: today's Claude cost + countdowns + updated ──
+  const today = data.claude?.today || {};
+  const cost = (today.cost_usd || 0).toFixed(2);
+  const msgs5h = data.claude?.messages_last_5h ?? 0;
+
+  const footRow = w.addStack();
+  footRow.layoutHorizontally();
+  const ft = footRow.addText(`$${cost} today · ${msgs5h} msgs`);
   ft.font = Font.systemFont(9);
   ft.textColor = new Color("#888");
-  fr.addSpacer();
-  const upd = fr.addText("updated " + ago(data.generated_at) + " ago");
+  footRow.addSpacer();
+  const upd = footRow.addText("updated " + ago(data.generated_at));
   upd.font = Font.systemFont(9);
   upd.textColor = new Color("#888");
+
+  const footRow2 = w.addStack();
+  footRow2.layoutHorizontally();
+  const cdx5h = countdown(data.codex?.primary?.resets_at);
+  const cdxWk = countdown(data.codex?.secondary?.resets_at);
+  const f2 = footRow2.addText(`Codex 5h ${cdx5h} · wk ${cdxWk}`);
+  f2.font = Font.systemFont(9);
+  f2.textColor = new Color("#888");
 
   return w;
 }
@@ -366,7 +399,7 @@ function buildLockRectangular(data) {
   );
   top.font = Font.semiboldSystemFont(13);
 
-  const bot = stack.addText(`resets ${countdown(data.codex?.primary?.resets_at)} · ${ago(data.generated_at)} ago`);
+  const bot = stack.addText(`resets ${countdown(data.codex?.primary?.resets_at)} · ${ago(data.generated_at)}`);
   bot.font = Font.systemFont(11);
   return w;
 }

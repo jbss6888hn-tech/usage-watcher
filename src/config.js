@@ -30,13 +30,26 @@ export async function loadConfig() {
     token: merged.GITHUB_TOKEN || "",
     host: merged.HOST || "",            // optional override of mac/win
     intervalSeconds: Number(merged.INTERVAL_SECONDS || 60),
+    claudePlan: (merged.CLAUDE_PLAN || "pro").toLowerCase(), // pro | max5 | max20 | api
   };
 }
 
 function envOverrides() {
   const o = {};
-  for (const k of ["GIST_ID", "GITHUB_TOKEN", "HOST", "INTERVAL_SECONDS"]) {
+  for (const k of ["GIST_ID", "GITHUB_TOKEN", "HOST", "INTERVAL_SECONDS", "CLAUDE_PLAN"]) {
     if (process.env[k]) o[k] = process.env[k];
   }
   return o;
 }
+
+/**
+ * Approximate Claude Code plan limits. These are heuristic numbers based on
+ * Anthropic's published guidance — actual limits fluctuate. All percentages
+ * derived from these should be rendered with a "~" marker in the UI.
+ */
+export const CLAUDE_PLAN_LIMITS = {
+  pro:   { msgs_5h:   45, msgs_7d:  225, label: "Pro" },
+  max5:  { msgs_5h:  225, msgs_7d: 1125, label: "Max 5x" },
+  max20: { msgs_5h:  900, msgs_7d: 4500, label: "Max 20x" },
+  api:   { msgs_5h: null, msgs_7d: null, label: "API" }, // no plan limits
+};
